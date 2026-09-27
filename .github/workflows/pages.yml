@@ -27,6 +27,12 @@ jobs:
           mkdir _site
           cp index.html _site/
           cp -r css js _site/
+          # tools/ 里的东西一律不上站点——只有这一个文件例外：它是"同一个 seed 在任何引擎画出
+          # 同一张盘"那条承诺的证人（node 侧实测出来的五张盘指纹）。浏览器门禁在已部署的站点上
+          # 也要能import 它，否则"打线上产物跑一遍"恰恰会跳过那条最该在线上验的断言。
+          # 它是纯数据 + 一个纯函数，没有 node 依赖，4 KB。
+          mkdir -p _site/tools
+          cp tools/golden.mjs _site/tools/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
