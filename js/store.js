@@ -32,21 +32,97 @@ function inkDecode(s, len) {
   return b;
 }
 
-function load() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return defaults();
-    const parsed = JSON.parse(raw);
-    const base = defaults();
-    return {
-      ...base,
-      ...parsed,
-      settings: { ...base.settings, ...(parsed.settings || {}) },
-      totals: { ...base.totals, ...(parsed.totals || {}) },
+// 两段式解码。第一段只管"能不能 parse 成个东西"，第二段逐条清洗：
+// 一条坏记录只丢那一条。原先是 `{...base, ...JSON.parse(raw)}` 那一类写法——
+// localStorage 里躺着一条 `null`、或者 resume.size 是个字符串，就当场抛异常，
+// 整个 Store 拿不到 data，玩家看到的是"页面白屏/按钮全哑"，而不只是"那次续局没了"。
+function intInRange(v, min, max) {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
+}
+
+function nonNeg(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
+}
+
+// 和 nonNeg 的分别是"缺省"与"丢弃"：设置/累计值坏了回到 0 是合理的，但一条
+// ms 是字符串的**纪录**被清洗成 ms=0，就等于凭空造出一个世界纪录并长期占住排名。
+// 纪录的写入方（recordBest）只会写数字，所以这里严格到"必须是数字"。
+function uint(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+function saneSettings(s) {
+  const base = defaults().settings;
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return base;
+  return {
+    sound: typeof s.sound === 'boolean' ? s.sound : base.sound,
+    reduceMotion: typeof s.reduceMotion === 'boolean' ? s.reduceMotion : base.reduceMotion,
+  };
+}
+
+function saneTotals(t) {
+  const base = defaults().totals;
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return base;
+  return { solved: nonNeg(t.solved), hints: nonNeg(t.hints), ms: nonNeg(t.ms) };
+}
+
+// 纪录是一条一档：某档那条坏了只丢那一档，其余档原样留着。
+function saneBest(b) {
+  const out = {};
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return out;
+  for (const [tier, rec] of Object.entries(b)) {
+    if (typeof tier !== 'string' || !rec || typeof rec !== 'object' || Array.isArray(rec)) continue;
+    const ms = uint(rec.ms);
+    const hints = uint(rec.hints);
+    const moves = uint(rec.moves);
+    if (ms === null || hints === null || moves === null) continue;
+    out[tier] = {
+      ms,
+      hints,
+      moves,
+      score: Number.isFinite(rec.score) ? rec.score : 0,
+      size: typeof rec.size === 'string' ? rec.size.slice(0, 16) : '',
+      at: nonNeg(rec.at),
     };
-  } catch {
-    return defaults();
   }
+  return out;
+}
+
+const MAX_BOARD = 400; // 9×9 = 81，留足余量；越界一律当坏记录
+
+function saneResume(r) {
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+  if (typeof r.seed !== 'string' || !r.seed || typeof r.tier !== 'string' || !r.tier) return null;
+  const size = intInRange(r.size, 1, MAX_BOARD);
+  if (size === null) return null;
+  if (typeof r.ink !== 'string' || r.ink.length !== size) return null;
+  return {
+    seed: r.seed.slice(0, 128),
+    tier: r.tier.slice(0, 32),
+    size,
+    ink: r.ink,
+    elapsedMs: nonNeg(r.elapsedMs),
+    moves: nonNeg(r.moves),
+    hints: nonNeg(r.hints),
+    at: nonNeg(r.at),
+  };
+}
+
+function load() {
+  let parsed;
+  try {
+    parsed = JSON.parse(localStorage.getItem(KEY));
+  } catch {
+    return defaults(); // 第一段：连 parse 都没过，只能从零开始
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return defaults();
+  return {
+    settings: saneSettings(parsed.settings),
+    best: saneBest(parsed.best),
+    resume: saneResume(parsed.resume),
+    totals: saneTotals(parsed.totals),
+  };
 }
 
 export const Store = {
