@@ -127,6 +127,21 @@ export class Game {
     return this;
   }
 
+  // 重开本局：题面（seed 与 script）不动，其余一切回到初始。撤销栈、提示游标、代价计数
+  // 少清一个，就会出现"重开之后还能撤销到上一局的那一步"或者"重开的第一次提示按第六次计费"。
+  restart() {
+    this.st = createState(this.board);
+    this.steps = [];
+    this.moves = 0;
+    this.hints = 0;
+    this.cursor = 0;
+    this.status = 'playing';
+    this.lastHint = null;
+    this.recompute();
+    this.checkWin();
+    return this;
+  }
+
   undo() {
     const step = this.steps.pop();
     if (!step) return null;

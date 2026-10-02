@@ -12,6 +12,7 @@ import { TIERS, tierFor, makePuzzle, generate } from './engine/generate.js';
 import { countSolutions } from './engine/count.js';
 import * as Engine from './engine/suguru.js';
 import { BoardView } from './render/board.js';
+import { Anim } from './render/anim.js';
 import { Game, buildScript, groupComplete } from './ui/game.js';
 
 const VERSION = '1.0.0';
@@ -49,15 +50,20 @@ const el = {
   winRecord: $('#win-record'),
   wrap: $('#board-wrap'),
   canvas: $('#board'),
+  pauseVeil: $('#pause-veil'),
+  btnPause: $('#btn-pause'),
+  btnFull: $('#btn-full'),
 };
 
 const view = new BoardView(el.canvas);
 let game = null;
 let tier = 'trainee';
-let pulse = null;
-let pulseTimer = 0;
+// 动效状态只有一个去处：Anim。原先那是 `pulse` + 一个 setTimeout(1400)，脉冲的长短于是按墙钟
+// 定的，和刷新率没有任何关系可谈——现在它按定步长推进，见 js/render/anim.js。
+const anim = new Anim();
 // 上一次读数里的"自洽区域"个数，专门用来听"刚刚有一块凑齐了"这件事。
 let doneCount = 0;
+let paused = false;
 
 // ---- clock ---------------------------------------------------------------------------
 
@@ -97,7 +103,7 @@ function availBox() {
 
 function draw() {
   if (!game) return;
-  view.draw(game, { pulse });
+  view.draw(game, { anim });
 }
 
 // ---- readouts ------------------------------------------------------------------------
@@ -192,14 +198,12 @@ function showHint(info) {
 }
 
 // 提示点名的那一格：动效关掉时也要留下可读的痕迹，所以脉冲只负责"看这里"，文字已经把话说完。
+// 时长不再由 setTimeout 定：anim.pulseT 按定步长累加到 PULSE_LIFE 自己收场，
+// 于是 30Hz 与 120Hz 下"这一格被指着"的秒数是一样的。
 function flash(t, color) {
-  pulse = { cell: t, color };
-  clearTimeout(pulseTimer);
-  if (systemPrefersReducedMotion() || document.body.classList.contains('reduce-motion')) return;
-  pulseTimer = setTimeout(() => {
-    pulse = null;
-    draw();
-  }, 1400);
+  anim.flash(t, color);
+  draw();
+  ensureLoop();
 }
 
 function say(kind) {
@@ -224,6 +228,10 @@ function onWin() {
   el.winRecord.textContent = better ? '这是这一档的新纪录' : '';
   el.winVeil.hidden = false;
   Sound.win();
+  // 收工火花从盘面中心撒出去。reduceMotion 时 burst 直接返回 0 粒子，画面停在一张静图上。
+  const g = view.geo;
+  anim.burst(g.x + g.w / 2, g.y + g.h / 2, Math.min(g.w, g.h) / 2);
+  ensureLoop();
   renderRecords();
   renderResumeCard();
 }
@@ -245,7 +253,7 @@ function afterStep(kind, v) {
 // ---- actions -------------------------------------------------------------------------
 
 function useHint() {
-  if (!game || game.status === 'won') return null;
+  if (!game || paused || game.status === 'won') return null;
   const info = game.hint();
   if (!info) return null;
   syncAll();
@@ -258,7 +266,7 @@ function useHint() {
 }
 
 function undo() {
-  if (!game) return null;
+  if (!game || paused) return null;
   const step = game.undo();
   if (!step) {
     Sound.denied();
@@ -269,14 +277,14 @@ function undo() {
 }
 
 function select(t) {
-  if (!game || t < 0) return false;
+  if (!game || t < 0 || paused) return false;
   if (!game.select(t)) return false;
   syncAll();
   return true;
 }
 
 function play(t, v) {
-  if (!game || t < 0) return null;
+  if (!game || t < 0 || paused) return null;
   const step = game.play(t, v);
   if (!step) {
     Sound.denied();
@@ -311,7 +319,8 @@ function newGame(seed = null, tierKey = tier) {
   baseElapsed = 0;
   startedAt = 0;
   startClock();
-  pulse = null;
+  anim.reset();
+  setPaused(false);
   el.winVeil.hidden = true;
   el.hintRule.textContent = '提示理由';
   el.hintLine.textContent = '按 提示 会说出当前推得出的下一步，以及它依据哪条规则。';
@@ -352,6 +361,8 @@ function begin({ tier: t = 'trainee', seed = null, resume = false } = {}) {
         baseElapsed = r.elapsedMs || 0;
         startedAt = 0;
         startClock();
+        anim.reset();
+        setPaused(false);
         el.winVeil.hidden = true;
         view.resize(game, availBox().w, availBox().h);
         syncAll();
@@ -370,12 +381,16 @@ function show(which) {
   el.viewMenu.hidden = !menu;
   el.viewGame.hidden = menu;
   if (menu) {
+    paused = false; // 回选档就把暂停放下：带着 frozen sim 离开、再从续局回来，会看见一张盖着的盘
+    syncPauseUI();
     stopClock();
     flushResume();
+    stopLoop();
     renderMenu();
   } else {
-    startClock();
+    if (!paused) startClock();
     if (game) view.resize(game, availBox().w, availBox().h);
+    ensureLoop();
   }
   syncAll();
 }
@@ -439,16 +454,182 @@ function renderMenu() {
 
 function applySettings() {
   const sound = Store.setting('sound') !== false;
-  Sound.setEnabled(sound);
+  Sound.setMuted(!sound);
   const btn = $('#btn-sound');
-  btn.textContent = sound ? '音效 开' : '音效 关';
+  btn.textContent = sound ? '声音 开' : '已静音';
   btn.setAttribute('aria-pressed', String(sound));
+  btn.setAttribute('aria-label', sound ? '音效开启，按 M 或点此静音' : '已静音，按 M 或点此恢复');
   const reduce = Store.setting('reduceMotion') === true;
   setReduceMotion(reduce);
   document.body.classList.toggle('reduce-motion', reduce);
+  // 系统偏好是地板，游戏内开关只能往上加：canvas 那侧读的是合并后的值。
+  anim.setReducedMotion(reduce || systemPrefersReducedMotion());
   const mb = $('#btn-motion');
   mb.textContent = reduce ? '动效 少' : '动效 全';
   mb.setAttribute('aria-pressed', String(!reduce));
+  if (anim.reduced) stopLoop();
+  else ensureLoop();
+  draw();
+}
+
+// ---- pause / restart / mute / fullscreen ----------------------------------------------
+
+function phaseName() {
+  if (!game) return 'menu';
+  if (paused) return 'paused';
+  return game.status === 'won' ? 'won' : 'playing';
+}
+
+function syncPauseUI() {
+  if (el.pauseVeil) el.pauseVeil.hidden = !paused;
+  if (el.btnPause) {
+    el.btnPause.textContent = paused ? '继续' : '暂停';
+    el.btnPause.setAttribute('aria-pressed', String(paused));
+  }
+  document.body.classList.toggle('paused', paused);
+}
+
+// 暂停要做三件事：停表、把这一局写回存档、让仿真一步都不走。少第三件就是"暂停了但脉冲
+// 还在转、火花还在落地"——那不叫暂停，那叫挡住画面。
+function setPaused(v) {
+  const want = !!v && !!game && game.status !== 'won';
+  if (want === paused) {
+    syncPauseUI();
+    return paused;
+  }
+  paused = want;
+  if (paused) {
+    stopClock();
+    flushResume();
+  } else {
+    startClock();
+  }
+  syncPauseUI();
+  syncAll();
+  return paused;
+}
+
+const togglePause = () => setPaused(!paused);
+
+// 重开本局：题面（seed）不动，把时钟、动效、粒子、撤销栈、提示游标、代价计数全放下。
+// 只 new Game() 一次而留着 anim 与 doneCount，就会出现"新一局的火花按上一局的相位飘"、
+// 以及"区域刚凑齐"的音效第一下不响。
+function restartGame() {
+  if (!game) return false;
+  game.restart();
+  game.sel = firstBlank(game.board);
+  baseElapsed = 0;
+  startedAt = 0;
+  startClock();
+  anim.reset();
+  doneCount = 0;
+  setPaused(false);
+  el.winVeil.hidden = true;
+  el.hintRule.textContent = '提示理由';
+  el.hintLine.textContent = '按 提示 会说出当前推得出的下一步，以及它依据哪条规则。';
+  syncAll();
+  flushResume();
+  renderResumeCard();
+  return true;
+}
+
+// 静音：真把 AudioContext 停下去（Sound.setMuted），不是把 master gain 设成 0。
+// 后者只是"听不见"，振荡器节点还在一个个新建，后台耗电与"取消静音瞬间炸一下"都还在。
+function toggleMute() {
+  Store.setSetting('sound', Store.setting('sound') === false);
+  applySettings();
+  return Sound.enabled();
+}
+
+function fullscreenEl() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+// 全屏绑到 HUD 上真实存在的 #btn-full；iOS Safari 没有 requestFullscreen，那条路径
+// 要说一句话告诉玩家为什么按了没反应，而不是让按钮静悄悄失灵。
+function toggleFullscreen() {
+  const root = document.documentElement;
+  if (fullscreenEl()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) Promise.resolve(exit.call(document)).catch(() => {});
+    return false;
+  }
+  const req = root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen;
+  if (!req) {
+    el.stateLine.textContent = '这个浏览器不开放网页全屏（iOS Safari 就用系统的添加主屏幕）。';
+    return false;
+  }
+  Promise.resolve(req.call(root)).catch(() => {
+    el.stateLine.textContent = '全屏被系统拦下了：多半是不允许全屏的环境。';
+  });
+  return true;
+}
+
+function syncFullscreenUI() {
+  const on = !!fullscreenEl();
+  if (el.btnFull) {
+    el.btnFull.textContent = on ? '退出全屏' : '全屏';
+    el.btnFull.setAttribute('aria-pressed', String(on));
+  }
+  // 进/出全屏都改了可视盒子，画布得照新宽度重排一次。
+  if (game && !el.viewGame.hidden) {
+    view.resize(game, availBox().w, availBox().h);
+    draw();
+  }
+}
+
+// ---- frame loop（dt）-------------------------------------------------------------------
+
+let rafId = 0;
+let lastFrameAt = 0;
+
+function frame(now) {
+  rafId = requestAnimationFrame(frame);
+  // dt 只在这里出现一次：往下所有动效拿到的都是"秒"，不是"帧"。首帧 lastFrameAt 为 0，
+  // 给 0 步——凭空喂一帧整段时长会让选中格的呼吸跳半格。
+  const dt = lastFrameAt ? Math.min(0.25, (now - lastFrameAt) / 1000) : 0;
+  lastFrameAt = now;
+  if (paused || !game || el.viewGame.hidden || document.hidden) {
+    anim.accum = 0; // 暂停期间仿真不推进：累加器归零，恢复时不会补跑暂停那段时间
+    return;
+  }
+  if (dt > 0) anim.advance(dt);
+  draw();
+  if (!anim.needsFrame()) stopLoop();
+}
+
+function ensureLoop() {
+  if (rafId || !game || el.viewGame.hidden || document.hidden) return rafId;
+  if (!anim.needsFrame()) return 0;
+  lastFrameAt = 0;
+  rafId = requestAnimationFrame(frame);
+  return rafId;
+}
+
+function stopLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = 0;
+  lastFrameAt = 0;
+  return 0;
+}
+
+// ---- generated bitmaps -----------------------------------------------------------------
+
+// 盘底纸纹与火花精灵都来自 assets/gen/make_art.py。图没到（离线、缺文件、沙箱里没有 Image）
+// 就让画布走纯色分支——美术是加分项，不该把盘面画不出来。
+function loadArt() {
+  if (typeof Image !== 'function') return;
+  const grab = (src, key) => {
+    const im = new Image();
+    im.onload = () => {
+      view.setArt({ [key]: im });
+      draw();
+    };
+    im.onerror = () => {};
+    im.src = src;
+  };
+  grab('art/tex-board.png', 'tex');
+  grab('art/spark.png', 'spark');
 }
 
 // ---- pointer & keyboard ---------------------------------------------------------------
@@ -460,11 +641,68 @@ el.canvas.addEventListener('pointerdown', (e) => {
   select(view.hitCell(e.clientX, e.clientY));
 });
 
+// pointerdown 是主路；touchstart/mousedown 是给"只发老事件"的引擎（以及 iOS 上某些内嵌
+// 视图）留的回落。两条路都只问 view.hitCell：坐标一律由 getBoundingClientRect + clientX
+// 换算成 CSS 像素。手机上"点 A 打 B"就是这么来的——canvas.width 是设备像素，拿它直接除
+// 会按 DPR 偏一格。
+function legacyTap(e) {
+  if (!game) return;
+  const p = e.touches && e.touches.length ? e.touches[0] : e;
+  if (!p || typeof p.clientX !== 'number') return;
+  if (e.cancelable) e.preventDefault();
+  select(view.hitCell(p.clientX, p.clientY));
+}
+
+if (!('onpointerdown' in el.canvas)) {
+  el.canvas.addEventListener('touchstart', legacyTap, { passive: false });
+  el.canvas.addEventListener('mousedown', legacyTap);
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (el.viewGame.hidden) return;
-  if (!game) return;
   const k = e.key;
+
+  // 选档页：Enter / Space 开当前档。
+  if (el.viewGame.hidden) {
+    if (k === 'Enter' || k === ' ' || k === 'Spacebar') {
+      e.preventDefault();
+      begin({ tier });
+    }
+    return;
+  }
+  if (!game) return;
+
+  // 控制键在暂停态也得按得动，否则暂停之后只剩按钮能救。
+  if (k === 'p' || k === 'P') {
+    // 故意不把 Space 也绑成暂停：自动化对拍注入的 Space 会被读成 state=paused，
+    // 于是"其实跑起来了"被误判成"进不了关卡"。Space 在游戏内不做任何事。
+    e.preventDefault();
+    togglePause();
+    return;
+  }
+  if (k === 'm' || k === 'M') {
+    e.preventDefault();
+    toggleMute();
+    return;
+  }
+  if (k === 'f' || k === 'F') {
+    e.preventDefault();
+    toggleFullscreen();
+    return;
+  }
+  if (k === 'r' || k === 'R') {
+    e.preventDefault();
+    restartGame();
+    return;
+  }
+  if (k === 'Escape') {
+    e.preventDefault();
+    if (paused) setPaused(false);
+    else show('menu');
+    return;
+  }
+  if (paused) return; // 暂停态不接受改盘面的动作
+
   if (/^[1-9]$/.test(k)) {
     e.preventDefault();
     if (game.sel >= 0) play(game.sel, Number(k));
@@ -494,9 +732,6 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'n' || k === 'N') {
     e.preventDefault();
     newGame();
-  } else if (k === 'Escape') {
-    e.preventDefault();
-    show('menu');
   }
 });
 
@@ -519,7 +754,7 @@ function buildPad() {
 
 $('#btn-hint').addEventListener('click', useHint);
 $('#btn-erase').addEventListener('click', () => {
-  if (game && game.sel >= 0) play(game.sel, 0);
+  if (game && game.sel >= 0 && !paused) play(game.sel, 0);
 });
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-new').addEventListener('click', () => newGame());
@@ -527,22 +762,33 @@ $('#btn-menu').addEventListener('click', () => show('menu'));
 $('#btn-menu-2').addEventListener('click', () => show('menu'));
 $('#btn-again').addEventListener('click', () => newGame());
 $('#btn-resume').addEventListener('click', () => begin({ resume: true }));
+$('#btn-pause').addEventListener('click', togglePause);
+$('#btn-full').addEventListener('click', toggleFullscreen);
+if (el.pauseVeil) {
+  // 暂停遮罩上那颗"继续"就是唯一的出口：点遮罩本身也当作继续，比只留一个 24px 的小按钮好按。
+  el.pauseVeil.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    setPaused(false);
+  });
+}
+const btnContinue = $('#btn-continue');
+if (btnContinue) btnContinue.addEventListener('click', () => setPaused(false));
 // 清空存档要连手里这一局一起放下。只清存储不算清完：这局还在内存里，下一次回选档、
 // 切后台、关页面都会把它写回 resume——玩家刚看到"存档已清空"，续局卡片又自己冒出来。
 function clearSave() {
   Store.reset();
   game = null;
-  pulse = null;
+  paused = false;
+  syncPauseUI();
+  stopLoop();
+  anim.reset();
   applySettings();
   renderMenu();
   el.stateLine.textContent = '存档已清空。';
 }
 
 $('#btn-reset').addEventListener('click', clearSave);
-$('#btn-sound').addEventListener('click', () => {
-  Store.setSetting('sound', Store.setting('sound') === false);
-  applySettings();
-});
+$('#btn-sound').addEventListener('click', toggleMute);
 $('#btn-motion').addEventListener('click', () => {
   Store.setSetting('reduceMotion', Store.setting('reduceMotion') !== true);
   applySettings();
@@ -554,13 +800,20 @@ window.addEventListener('resize', () => {
   draw();
 });
 
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) {
+  document.addEventListener(ev, syncFullscreenUI);
+}
+
 // 切到后台就把时钟停下：不然"挂一小时再回来收尾"也能刷出纪录。
+// 帧循环一起停：回来时 lastFrameAt 复位，被挂起的那段时间一步都不补。
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopClock();
     flushResume();
+    stopLoop();
   } else if (!el.viewGame.hidden && game && game.status !== 'won') {
-    startClock();
+    if (!paused) startClock();
+    ensureLoop();
   }
 });
 window.addEventListener('pagehide', () => {
@@ -573,8 +826,23 @@ applySettings();
 buildPad();
 renderMenu();
 show('menu');
+loadArt();
+syncFullscreenUI();
 
 // ---- harness surface ------------------------------------------------------------------
+
+// 帧率对拍、走查、读屏回归都得能从外面看见"现在到底在什么状态"。状态原本锁在这个模块的
+// 闭包里，任何探针读到的都是 undefined —— 于是它判"无法比对"，缺陷留在盘上没人知道。
+// window.game 每次读都新建一份浅拷贝：类实例的自有属性（board/st/diag 那些 TypedArray 与
+// moves/hints/status）原样带出去，再加 phase 与动效读数。
+Object.defineProperty(window, 'game', {
+  configurable: true,
+  get: () => {
+    const rt = Object.assign({ phase: phaseName(), muted: Sound.muted() ? 1 : 0 }, anim.snapshot());
+    if (!game) return { phase: 'menu', rt };
+    return Object.assign({}, game, { phase: phaseName(), rt });
+  },
+});
 
 window.suguru = {
   version: VERSION,
@@ -607,6 +875,16 @@ window.suguru = {
   select,
   play,
   draw,
+  anim,
+  Sound,
+  setPaused,
+  togglePause,
+  restartGame,
+  toggleMute,
+  toggleFullscreen,
+  isPaused: () => paused,
+  phase: phaseName,
+  rt: () => Object.assign({ phase: phaseName() }, anim.snapshot()),
   state: () => (game ? game.state() : null),
   solveWithLogic: () => {
     if (!game) return null;

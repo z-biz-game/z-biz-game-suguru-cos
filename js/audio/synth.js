@@ -6,9 +6,15 @@
 
 let ctx = null;
 let master = null;
-let enabled = true;
+let muted = false;
+// 静音态"到底有没有还在建节点"是要能量出来的，不是靠读代码保证的。
+let nodes = 0;
 
 function audio() {
+  // 静音时连 context 都不递出去：tone() 于是拿不到 ac，一个振荡器节点也不会被创建。
+  // 只把 master.gain 设成 0 那种写法是"假静音"——听不见，但节点照建、上下文照跑、
+  // 后台照耗电，而且取消静音的瞬间会把攒下的尾音一起放出来。
+  if (muted) return null;
   if (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined') return null;
   if (!ctx) {
     const Ctor = typeof AudioContext !== 'undefined' ? AudioContext : webkitAudioContext;
@@ -27,10 +33,11 @@ function audio() {
 
 function tone({ f0, f1 = f0, dur = 0.12, type = 'sine', gain = 0.22, delay = 0 }) {
   const ac = audio();
-  if (!ac || !enabled) return;
+  if (!ac) return;
   const t = ac.currentTime + delay;
   const osc = ac.createOscillator();
   const vol = ac.createGain();
+  nodes++;
   osc.type = type;
   osc.frequency.setValueAtTime(f0, t);
   osc.frequency.exponentialRampToValueAtTime(Math.max(40, f1), t + dur);
@@ -43,10 +50,32 @@ function tone({ f0, f1 = f0, dur = 0.12, type = 'sine', gain = 0.22, delay = 0 }
 }
 
 export const Sound = {
-  setEnabled(v) {
-    enabled = !!v;
+  // 真停 AudioContext：静音 ⇒ suspend()，恢复 ⇒ resume()。
+  setMuted(v) {
+    muted = !!v;
+    if (!ctx) return muted;
+    try {
+      if (muted) {
+        if (ctx.state === 'running') ctx.suspend().catch(() => {});
+      } else if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    } catch {
+      /* 老 WebKit 上 suspend 可能是同步的或不存在；静音本身已经由 `muted` 挡住了节点 */
+    }
+    return muted;
   },
-  enabled: () => enabled,
+  setEnabled(v) {
+    return Sound.setMuted(!v);
+  },
+  muted: () => muted,
+  enabled: () => !muted,
+  // 给 harness 与验收场景用：静音态跑一遍全部音效，nodes 必须一动不动。
+  state: () => ({ muted, ctxState: ctx ? ctx.state : 'none', nodes }),
+  resetCount() {
+    nodes = 0;
+    return nodes;
+  },
 
   // 落子的音高跟着数字走：1 最低、9 最高。写下的数在听上就是一段旋律，
   // 而"叮"一声不分大小那种音效，玩家在闭眼校对时什么也读不出来。

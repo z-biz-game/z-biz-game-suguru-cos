@@ -20,11 +20,18 @@ body { touch-action: manipulation; }
 #app {
   max-width: 1180px;
   margin: 0 auto;
-  padding: var(--space-page) var(--space-page) var(--space-inner);
+  /* 刘海与 home indicator：viewport-fit=cover 已经在 head 里，env() 才有值。
+     不加这一层，顶部那颗"声音 开"在 iPhone 上会被刘海吃掉一半。 */
+  padding:
+    calc(var(--space-page) + env(safe-area-inset-top))
+    calc(var(--space-page) + env(safe-area-inset-right))
+    calc(var(--space-page) + env(safe-area-inset-bottom))
+    calc(var(--space-page) + env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: var(--space-card);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -76,6 +83,12 @@ button {
   border: 1px solid var(--line);
   background: var(--surface);
   padding: 10px 16px;
+  /* 命中区下限：44×44。原来的 10px 上下内边距配 1.1 行高只有 ~38px，拇指按上去
+     十次里总有一次按到隔壁那颗——这是"能点"和"点得准"的差别。 */
+  min-height: 44px;
+  min-width: 44px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: background var(--dur-tap) var(--ease-ease), border-color var(--dur-tap) var(--ease-ease), transform var(--dur-tap) var(--ease-spring);
 }
 
@@ -431,6 +444,72 @@ main { flex: 1; }
 /* 320px 这一档，先挤掉可读格子的不是盘面而是套在盘面外面的两层边距：九格盘按 26px 的可读下限
    就要 234px，加上页面 40px、面板 32px 的留白就出框了。所以窄屏收边距，不动 Cell.min。 */
 @media (max-width: 400px) {
-  #app { padding-left: 10px; padding-right: 10px; }
+  #app { padding-left: calc(10px + env(safe-area-inset-left)); padding-right: calc(10px + env(safe-area-inset-right)); }
   .stage { padding: var(--space-inner); }
+}
+
+/* ---------- pause ---------- */
+
+#pause-veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 11, 22, 0.82);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(1.5px);
+  z-index: 2;
+}
+
+.pause-card {
+  text-align: center;
+  padding: var(--space-card);
+  border: 1px solid var(--line-heavy);
+  border-radius: var(--radius-card);
+  background: var(--surface-lift);
+  max-width: 86%;
+}
+
+.pause-card h3 { margin: 0 0 6px; font-size: 19px; }
+.pause-card p { margin: 0 0 12px; font-size: 13px; color: var(--ink-dim); line-height: 1.65; }
+
+/* ---------- touch / motion / fullscreen ---------- */
+
+/* 手指上屏幕的时候，命中区再抬高一档：44 是下限，48 才是拇指的舒适区。 */
+@media (pointer: coarse) {
+  button { min-height: 48px; }
+  .pad button { min-height: 56px; font-size: 19px; }
+  .tier { min-height: 56px; }
+  .top-actions button { min-width: 96px; }
+}
+
+/* 系统级的"少动效"是地板，游戏内那个开关只能往上加不能往下减。
+   这里是真的把动效关掉——不是只把 duration 改短：入场位移、按钮回弹、遮罩淡入全部取消。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .view,
+  #win-veil,
+  #pause-veil { animation: none !important; }
+  button:active { transform: none; }
+}
+
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+:fullscreen,
+:-webkit-full-screen {
+  background: var(--bg-top);
+  padding: 0;
 }

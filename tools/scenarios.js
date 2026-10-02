@@ -841,12 +841,52 @@
     $('#btn-motion').click();
     await wait(20);
     eq('动效开关能切回来', document.body.classList.contains('reduce-motion'), false);
-    // 音效开关同样落在真实状态上（AudioContext 在 headless 里可能没有，只查开关链路）。
+    // 音效开关：静音必须是"真静音"——AudioContext 被 suspend，而且一个振荡器节点都不许新建。
+    // （AudioContext 在 headless 里可能没有，那种环境只查开关链路与"节点数为 0"这一半。）
+    const hasAudio = typeof AudioContext !== 'undefined' || typeof w.webkitAudioContext !== 'undefined';
     $('#btn-sound').click();
     eq('音效开关切到关', A().Store.setting('sound'), false);
-    eq('音效按钮文案跟着改', text('#btn-sound'), '音效 关');
+    eq('静音按钮文案跟着改', text('#btn-sound'), '已静音');
+    A().Sound.resetCount();
+    ['place', 'erase', 'undo', 'region', 'conflict', 'hint', 'denied', 'win'].forEach((m) => A().Sound[m](5));
+    eq('静音态一个振荡器节点都不许建', A().Sound.state().nodes, 0);
+    eq('静音态记在 Sound 上', A().Sound.muted(), true);
     $('#btn-sound').click();
     eq('音效开关切回开', A().Store.setting('sound'), true);
+    eq('取消静音之后 Sound 不再挡', A().Sound.muted(), false);
+    if (hasAudio) {
+      A().Sound.resetCount();
+      A().Sound.place(5);
+      ck('发声态确实建了节点', A().Sound.state().nodes >= 1, JSON.stringify(A().Sound.state()));
+    }
+
+    // 暂停：仿真必须一步都不走，且不接受改盘面的动作。
+    A().begin({ tier: 'trainee', seed: 'scen|a11y-pause' });
+    await wait(60);
+    A().setPaused(true);
+    eq('暂停把 phase 挂出来', A().phase(), 'paused');
+    eq('暂停遮罩出来了', shown('#pause-veil'), true);
+    const clockFrozen = A().anim.clock;
+    await wait(160);
+    eq('暂停期间动效时钟不动', A().anim.clock, clockFrozen);
+    eq('暂停时提示被拒', A().useHint(), null);
+    eq('暂停时撤销被拒', A().undo(), null);
+    A().setPaused(false);
+    eq('继续之后遮罩收起', shown('#pause-veil'), false);
+    await wait(140);
+    ck('继续之后动效恢复推进', A().anim.clock > clockFrozen, String(A().anim.clock));
+
+    // 重开本局：题面不变，代价与动效全部归零。
+    A().useHint();
+    const seedBefore = A().state().seed;
+    ck('重开之前已经花过提示', A().state().hints >= 1, String(A().state().hints));
+    A().restartGame();
+    eq('重开不换题面', A().state().seed, seedBefore);
+    eq('重开把提示清零', A().state().hints, 0);
+    eq('重开把步数清零', A().state().moves, 0);
+    eq('重开把撤销栈清空', A().state().steps, 0);
+    eq('重开把动效时钟清零', A().anim.clock, 0);
+    eq('重开之后不在暂停态', A().phase(), 'playing');
     // 清空存档是一行：所有派生状态都得回到初始。
     A().begin({ tier: 'trainee', seed: 'scen|a11y-reset' });
     await wait(40);

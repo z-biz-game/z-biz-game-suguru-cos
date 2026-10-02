@@ -6,6 +6,7 @@
 
 import { Palette, Regions, Cell, Radius, Font } from '../theme.js';
 import { isGiven } from '../engine/suguru.js';
+import { pulseProgress, breathPhase } from './anim.js';
 
 const FONT = Font.sans;
 
@@ -45,6 +46,31 @@ export class BoardView {
     this.geo = { cell: 0, x: 0, y: 0, w: 0, h: 0, dpr: 1 };
     this.game = null;
     this.tint = null;
+    // 位图由 assets/gen/make_art.py 产出：tex-board 是盘底纸纹，spark 是收工火花的那一枚精灵。
+    this.art = { tex: null, spark: null, pattern: null };
+  }
+
+  // pattern 绑在这张 canvas 的 context 上，而且图没解码完时 createPattern 给 null——
+  // 所以只在这里建，取用时再懒着补。
+  setArt({ tex, spark } = {}) {
+    if (tex !== undefined && tex !== this.art.tex) {
+      this.art.tex = tex;
+      this.art.pattern = null;
+    }
+    if (spark !== undefined) this.art.spark = spark;
+  }
+
+  texturePattern() {
+    const { tex } = this.art;
+    if (!tex || !tex.complete || !tex.naturalWidth) return null;
+    if (!this.art.pattern) {
+      try {
+        this.art.pattern = this.ctx.createPattern(tex, 'repeat');
+      } catch {
+        return null;
+      }
+    }
+    return this.art.pattern;
   }
 
   // 后备缓冲按设备像素定尺寸，而每个绘制调用都留在 CSS 像素里：顶部一次 setTransform，
@@ -83,7 +109,7 @@ export class BoardView {
     return gy * game.w + gx;
   }
 
-  draw(game, { pulse = null } = {}) {
+  draw(game, { anim = null } = {}) {
     this.game = game;
     if (!this.tint) this.tint = regionColors(game.board);
     const { ctx, geo } = this;
@@ -92,11 +118,26 @@ export class BoardView {
     const cells = game.st.cells;
     const bad = game.diag.badCells;
     const won = game.status === 'won';
+    const pulse = anim && anim.pulse ? anim.pulse : null;
     ctx.clearRect(0, 0, geo.w, geo.h);
 
     roundRect(ctx, 0, 0, geo.w, geo.h, Radius.card);
     ctx.fillStyle = Palette.surface;
     ctx.fill();
+
+    // 0) 盘底纸纹。它只负责"这不是一张纯色的塑料"，所以透明度压到 12%——
+    //    区域底色的相对亮度带（0.013~0.024）是量出来保证白字 4.5:1 的，不能被纹理搅动。
+    const pat = this.texturePattern();
+    if (pat) {
+      ctx.save();
+      roundRect(ctx, 0, 0, geo.w, geo.h, Radius.card);
+      ctx.clip();
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = pat;
+      ctx.fillRect(0, 0, geo.w, geo.h);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
 
     // 1) 区域底色。逐格铺，形状就是区域本身；同区域的格由第 2 步的细线连成一片。
     for (let t = 0; t < b.size; t++) {
@@ -155,10 +196,15 @@ export class BoardView {
     // 5) 选中的格：琥珀方框。键盘玩家和指针玩家走的是同一个 sel。
     if (game.sel >= 0) {
       const r = this.cellRect(game.sel);
+      // 呼吸只由相位决定：reduceMotion 或没有 anim 时相位停在 0，画出来就是一张静图。
+      const phase = anim && !anim.reduced ? breathPhase(anim) : 0;
+      const wave = 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+      ctx.globalAlpha = anim && anim.reduced ? 1 : 0.72 + 0.28 * wave;
       ctx.strokeStyle = isGiven(b, game.sel) ? Palette.info : Palette.accent;
-      ctx.lineWidth = Math.max(2, cell * 0.07);
+      ctx.lineWidth = Math.max(2, cell * (0.062 + 0.022 * wave));
       roundRect(ctx, r.x + 1.5, r.y + 1.5, cell - 3, cell - 3, Radius.cell);
       ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
     // 6) 数字。题面给的用冷白，玩家写的用琥珀——盘上的数字只有这两种身份，
@@ -177,14 +223,50 @@ export class BoardView {
     }
 
     // 7) 提示刚刚点名的那一格——UI 唯一被允许说"看这里"的地方。
+    //    虚线在转、方框在收、透明度在掉，三件事都由 anim 的进度说；reduceMotion 时进度停在 0，
+    //    于是它退化成一张"这一格"的静图，而文字提示本来就已经把话说完了。
     if (pulse && pulse.cell != null && pulse.cell >= 0) {
+      const k = anim && !anim.reduced ? pulseProgress(anim) : 0;
       const r = this.cellRect(pulse.cell);
+      const inset = 3 + k * cell * 0.1;
+      ctx.save();
+      ctx.globalAlpha = 1 - k * 0.75;
       ctx.strokeStyle = pulse.color || Palette.hint;
-      ctx.lineWidth = Math.max(2.5, cell * 0.09);
+      ctx.lineWidth = Math.max(2.5, cell * (0.09 - 0.03 * k));
       ctx.setLineDash([Math.max(4, cell * 0.22), Math.max(3, cell * 0.16)]);
-      roundRect(ctx, r.x + 3, r.y + 3, cell - 6, cell - 6, Radius.cell);
+      ctx.lineDashOffset = -(anim ? anim.clock : 0) * cell * 2.2;
+      roundRect(ctx, r.x + inset, r.y + inset, cell - inset * 2, cell - inset * 2, Radius.cell);
       ctx.stroke();
+      ctx.restore();
       ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+    }
+
+    // 8) 收工火花。精灵是 art/spark.png（生成器产的那枚径向白点），按粒子自己的旋转与寿命画。
+    const ps = anim && anim.particles ? anim.particles : null;
+    if (ps && ps.length) {
+      const spark = this.art.spark;
+      const canSprite = !!(spark && spark.complete && spark.naturalWidth);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const p of ps) {
+        const a = Math.max(0, Math.min(1, p.life / p.maxLife));
+        ctx.globalAlpha = a;
+        if (!canSprite) {
+          ctx.fillStyle = Palette.accent;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, (p.size * a) / 2, 0, Math.PI * 2);
+          ctx.fill();
+          continue;
+        }
+        const s = p.size * (0.45 + 0.55 * a);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.drawImage(spark, -s / 2, -s / 2, s, s);
+        ctx.setTransform(this.geo.dpr, 0, 0, this.geo.dpr, 0, 0);
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
     }
   }
 

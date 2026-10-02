@@ -85,6 +85,15 @@
         </div>
         <div id="board-wrap">
           <canvas id="board" tabindex="0" role="img" aria-label="数方盘面：方向键移动选中格，数字键落子" aria-describedby="state-line"></canvas>
+          <div id="pause-veil" hidden>
+            <div class="pause-card">
+              <h3>已暂停</h3>
+              <p>计时与动效都停在这一步，盘面原样留着。按 <b>P</b>、点这块卡片、或按下面的"继续"接着推。</p>
+              <div class="win-actions">
+                <button id="btn-continue" class="primary" type="button">继续</button>
+              </div>
+            </div>
+          </div>
           <div id="win-veil" hidden>
             <div class="win-card">
               <h3>每个区域都各装了 1 到它的格数</h3>
@@ -107,6 +116,8 @@
           <button id="btn-hint" class="primary" type="button">提示<span class="mono" id="hint-count">0</span></button>
           <button id="btn-erase" class="ghost" type="button">擦掉</button>
           <button id="btn-undo" class="ghost" type="button">撤销</button>
+          <button id="btn-pause" class="ghost" type="button" aria-pressed="false">暂停</button>
+          <button id="btn-full" class="ghost" type="button" aria-pressed="false">全屏</button>
           <button id="btn-new" class="ghost" type="button">换一局</button>
           <button id="btn-menu" class="ghost" type="button">回选档</button>
         </div>
@@ -134,7 +145,7 @@
           <span><i class="sw sw-done"></i>已自洽的区域</span>
           <span><i class="sw sw-pulse"></i>提示点名的格</span>
         </div>
-        <p class="keyhint"><b>点击</b> 选格 · <b>1..9</b> 落子 · <b>0 / 退格</b> 擦掉 · <b>方向键</b> 移动 · <b>H</b> 提示 · <b>Z</b> 撤销 · <b>N</b> 换一局 ·<span class="sr-note">键盘全程可完成一局；选中格的行列、区域、当前值会念给读屏器</span></p>
+        <p class="keyhint"><b>点击</b> 选格 · <b>1..9</b> 落子 · <b>0 / 退格</b> 擦掉 · <b>方向键</b> 移动 · <b>H</b> 提示 · <b>Z</b> 撤销 · <b>N</b> 换一局 · <b>R</b> 重开本局 · <b>P</b> 暂停 · <b>M</b> 静音 · <b>F</b> 全屏 ·<span class="sr-note">键盘全程可完成一局；选中格的行列、区域、当前值会念给读屏器</span></p>
       </aside>
     </section>
   </main>
