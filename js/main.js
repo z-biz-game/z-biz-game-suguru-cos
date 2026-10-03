@@ -80,6 +80,32 @@ function stopClock() {
   startedAt = 0;
 }
 
+// ── 暂停 ────────────────────────────────────────────────────────────────
+// 暂停是**真冻结时钟**，不是挂个标签：暂停那一瞬把还在跑的那一段折进 baseElapsed，
+// 再把 startedAt 清零 —— clock() 于是恒等于 baseElapsed，一毫秒都不再涨。
+// 恢复时重新盖上 startedAt，时钟从冻结处续走；因为 baseElapsed 已经是累计值，
+// 恢复后第一帧的 dt 就是一个正常帧间隔，不会把暂停那几秒一次性吃掉（不跳步）。
+let paused = false;
+function setPaused(next) {
+  next = !!next;
+  if (paused === next) return paused;
+  if (next) {
+    baseElapsed = clock();   // 先结算到此刻，再停表
+    startedAt = 0;
+  } else {
+    startedAt = Date.now();
+  }
+  paused = next;
+  paintPause();
+  return paused;
+}
+function paintPause() {
+  const btn = $('#btn-pause');
+  if (!btn) return;
+  btn.textContent = paused ? '继续' : '暂停';
+  btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+}
+
 // ---- geometry ------------------------------------------------------------------------
 
 // 可用盒子只问一次：宽度跟着 .stage，高度不能让盘面把整个面板推下屏幕。
@@ -311,6 +337,8 @@ function newGame(seed = null, tierKey = tier) {
   baseElapsed = 0;
   startedAt = 0;
   startClock();
+  // 换一局＝新的一局，新局一定在走：带着上一局的 paused=true 进来会让时钟和按钮各说各话
+  if (paused) { paused = false; paintPause(); }
   pulse = null;
   el.winVeil.hidden = true;
   el.hintRule.textContent = '提示理由';
@@ -494,6 +522,9 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'n' || k === 'N') {
     e.preventDefault();
     newGame();
+  } else if (k === 'p' || k === 'P' || k === ' ' || e.code === 'Space') {
+    e.preventDefault();
+    setPaused(!paused);
   } else if (k === 'Escape') {
     e.preventDefault();
     show('menu');
@@ -517,6 +548,7 @@ function buildPad() {
   }
 }
 
+$('#btn-pause').addEventListener('click', () => setPaused(!paused));
 $('#btn-hint').addEventListener('click', useHint);
 $('#btn-erase').addEventListener('click', () => {
   if (game && game.sel >= 0) play(game.sel, 0);
@@ -607,6 +639,12 @@ window.suguru = {
   select,
   play,
   draw,
+  get paused() {
+    return paused;
+  },
+  setPaused,
+  /** 正在推进的那个数（毫秒）。暂停时它必须一毫秒不动 —— 这就是"真冻结"的判据。 */
+  simClock: () => clock(),
   state: () => (game ? game.state() : null),
   solveWithLogic: () => {
     if (!game) return null;
