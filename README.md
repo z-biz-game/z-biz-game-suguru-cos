@@ -157,7 +157,7 @@ js/theme.js            配色与动效令牌（样式表和 canvas 共用同一�
 js/audio/synth.js      WebAudio 合成音效，零音频文件
 js/store.js            localStorage 单键存档：种子 + 盘面（一格一字符）+ 这一局的花费
 js/main.js             装配、菜单、事件、window.suguru 调试面
-tools/                 engine-test / balance / golden(跨引擎夹具) / playtest(CDP) / scenarios / verify.sh / tools/assemble-site / tools/deploy-set / tools/deploy-set-selftest
+tools/                 engine-test / balance / golden(跨引擎夹具) / playtest(CDP) / scenarios / verify.sh / assemble-site.sh / deploy-set.mjs / deploy-set-selftest.mjs
 tools/assemble-site.sh  部署产物的唯一清单（pages.yml 与本地闸调同一支）
 tools/deploy-set.mjs  部署集闸：检查即将上传的那份产物
 tools/deploy-set-selftest.mjs  部署集闸的阴性自证（每一类断言当场打红一次）
