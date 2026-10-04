@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot browser verification: real Chrome, real DOM, scripted scenarios.
 #
-#   ./tools/verify.sh                       # engine gen play hint conflict save resume layout a11y
+#   ./tools/verify.sh                       # engine gen play hint conflict save resume layout a11y pause
 #   SCENARIOS="play hint" ./tools/verify.sh
 #   SHOTS=1 ./tools/verify.sh               # 顺手截 menu/board/win 三张图到 tools/shots/
 #   BASE_URL=https://z-biz-game.github.io/z-biz-game-suguru-cos/ ./tools/verify.sh
@@ -20,6 +20,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 # 9374：DevTools 端口。9371/9372/9373 已经被海战推演/ulam/loshu 占了，撞号等于两个 verify.sh
 # 连到同一个 Chrome 上，把"验收"变成"看了一个陌生页面"。
 PORT=${CDP_PORT:-9374}
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then echo ":$PORT is already LISTENING — a sibling gate or an orphan Chrome holds it; attaching there reads someone else's browser. Wait for it to finish, or rerun with CDP_PORT=<a free port>." >&2; lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >&2 || true; exit 6; fi  # 一机一台：撞在同一个默认口上时不报错的是 Chrome，报错的是绿——先让路再开闸
 # 5272：本仓在 z-biz-game 端口表里占的号（5271 是海战推演的）。
 HTTP=${HTTP_PORT:-5272}
 BASE=${BASE_URL:-http://127.0.0.1:$HTTP/}
@@ -87,7 +88,7 @@ echo "boot: suguru $BOOT at $BASE"
 [ "$BOOT" = "nope" ] && { echo "window.suguru never appeared at $BASE" >&2; exit 4; }
 
 FAILED=0
-for s in ${SCENARIOS:-engine gen play hint conflict save resume layout a11y}; do
+for s in ${SCENARIOS:-engine gen play hint conflict save resume layout a11y pause}; do
   echo "=== $s ==="
   node tools/playtest.cjs scenario "$s" 2>/tmp/suguru-$s.console.log | tail -1 | sed 's/^RESULT //' | python3 -c "
 import sys, json
