@@ -4,14 +4,6 @@
 // 布局也住在这里（格子边长来自容器、盘面原点、DPR），因为 hitCell 必须用 draw 刚刚用过的那批
 // 数字来回答。这两处一旦分家，就会出现那种"盘面画对了，点击却偏一格"的事故。
 
-
-/* ---------- 帧率无关（dt）---------- */
-/* 本仓**没有逐帧运动**，所以「帧率无关」这一项在本仓是空命题而不是缺陷：js/render/board.js 的重绘由 pointerdown / click / keydown 触发，全仓 requestAnimationFrame 出现 0 次；本仓连 setInterval 都没有，无任何周期性重绘
-   没有自续期的 requestAnimationFrame 循环，屏上就没有「每帧推进」的量，帧率也就无从影响它。
-   写这段备案是为了让账上分得开"查过、确实不需要"与"没人查过"——不是为了让判据变绿。
-
-   规矩：**哪天在本仓加了逐帧动画循环，必须先删掉这段备案**，并让循环体消费 rAF 自带的
-   时间戳（或自己取 performance.now()），把动画进度写成绝对截止；只按帧累加位置的一律不算。 */
 import { Palette, Regions, Cell, Radius, Font } from '../theme.js';
 import { isGiven } from '../engine/suguru.js';
 
