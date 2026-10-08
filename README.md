@@ -120,7 +120,7 @@ BASE_URL=https://z-biz-game.github.io/z-biz-game-suguru-cos/ npm run verify
 
 ## 难度是量出来的
 
-`SAMPLES=24 npm run balance`（每档 24 个种子，2026-09-28，空载机器；CI 跑的就是这一档配置）：
+`SAMPLES=24 npm run balance`（每档 24 个种子，2026-09-28，空载机器；CI 跑的就是这一档配置——`.github/workflows/ci.yml` 的「Difficulty ladder is still measured」那一步带着 `SAMPLES: "24"`，`574e381` 那一笔的 run 37459932777 读回来是绿）：
 
 | 档 | 盘面 | 区域数≈ | 区域上限 | 分数带（选取目标） | 实测中位 | 命中 | 平均抽几次（最坏） | 提示 少/中/多 | 出题 p95 | 最慢 |
 |---|---|---|---|---|---|---|---|---|---|---|
