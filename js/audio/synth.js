@@ -6,15 +6,18 @@
 
 let ctx = null;
 let master = null;
-let muted = false;
-// 静音态"到底有没有还在建节点"是要能量出来的，不是靠读代码保证的。
-let nodes = 0;
+let enabled = true;
+// 静音偏好：读回存档。放在模块顶层，这样每次 init（首屏、开局、重开）都拿到同一个答案，
+// 重开一局不会把玩家的静音选择洗掉。
+try {
+  if (localStorage.getItem('cos.mute') === '1') enabled = false;
+} catch { /* 读不到就沿用默认开声 */ }
+
 
 function audio() {
-  // 静音时连 context 都不递出去：tone() 于是拿不到 ac，一个振荡器节点也不会被创建。
-  // 只把 master.gain 设成 0 那种写法是"假静音"——听不见，但节点照建、上下文照跑、
-  // 后台照耗电，而且取消静音的瞬间会把攒下的尾音一起放出来。
-  if (muted) return null;
+  // 静音态第一行就返回：既不把已挂起的 ctx 拉起来，也不新建节点。
+  // 这条比 "gain 设 0" 强一档——静音时这个 AudioContext 根本没有在跑。
+  if (!enabled) return null;
   if (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined') return null;
   if (!ctx) {
     const Ctor = typeof AudioContext !== 'undefined' ? AudioContext : webkitAudioContext;
@@ -50,31 +53,22 @@ function tone({ f0, f1 = f0, dur = 0.12, type = 'sine', gain = 0.22, delay = 0 }
 }
 
 export const Sound = {
-  // 真停 AudioContext：静音 ⇒ suspend()，恢复 ⇒ resume()。
-  setMuted(v) {
-    muted = !!v;
-    if (!ctx) return muted;
-    try {
-      if (muted) {
-        if (ctx.state === 'running') ctx.suspend().catch(() => {});
-      } else if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
-    } catch {
-      /* 老 WebKit 上 suspend 可能是同步的或不存在；静音本身已经由 `muted` 挡住了节点 */
-    }
-    return muted;
-  },
   setEnabled(v) {
-    return Sound.setMuted(!v);
-  },
-  muted: () => muted,
-  enabled: () => !muted,
-  // 给 harness 与验收场景用：静音态跑一遍全部音效，nodes 必须一动不动。
-  state: () => ({ muted, ctxState: ctx ? ctx.state : 'none', nodes }),
-  resetCount() {
-    nodes = 0;
-    return nodes;
+    const on = !!v;
+    if (on === enabled) return;
+    enabled = on;
+    // 真静音：停掉 AudioContext 本身（时钟停、图不跑），不是把音量拧到 0。
+    if (ctx) {
+      if (on) {
+        if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+      } else if (ctx.state === 'running' && ctx.suspend) {
+        ctx.suspend().catch(() => {});
+      }
+    }
+    // 偏好落盘：刷新页面后 init 要能读回静音态，不能自己弹回来。
+    try {
+      localStorage.setItem('cos.mute', on ? '1' : '0');
+    } catch { /* 隐私模式下写不进去也不该炸游戏 */ }
   },
 
   // 落子的音高跟着数字走：1 最低、9 最高。写下的数在听上就是一段旋律，
