@@ -518,23 +518,6 @@ function syncPauseUI() {
 
 // 暂停要做三件事：停表、把这一局写回存档、让仿真一步都不走。少第三件就是"暂停了但脉冲
 // 还在转、火花还在落地"——那不叫暂停，那叫挡住画面。
-function setPaused(v) {
-  const want = !!v && !!game && game.status !== 'won';
-  if (want === paused) {
-    syncPauseUI();
-    return paused;
-  }
-  paused = want;
-  if (paused) {
-    stopClock();
-    flushResume();
-  } else {
-    startClock();
-  }
-  syncPauseUI();
-  syncAll();
-  return paused;
-}
 
 const togglePause = () => setPaused(!paused);
 
