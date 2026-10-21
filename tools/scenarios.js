@@ -900,8 +900,8 @@
 
   // ---------- pause ----------
   //
-  // #btn-pause 与 #btn-fullscreen 都是真控件：js/main.js:90 的 setPaused 真的把 startedAt 清零，
-  // js/main.js:670 的 bindFullscreen 真的绑在顶栏那颗按钮上。按钮的 title 写着「暂停 / 继续 (P 或
+  // #btn-pause 与 #btn-fullscreen 都是真控件：js/main.js:500 的 setPaused 真的把 startedAt 清零，
+  // js/main.js:555 那颗 #btn-fullscreen 真的绑在顶栏那颗按钮上。按钮的 title 写着「暂停 / 继续 (P 或
   // Space)」，全屏那颗写着「全屏（F）」——原先十场里没有一场点过这两颗，也没有一场按过这三个键，
   // 所以这几句话在整个仓里没有任何一处代码为它们担保。这一场就是它们的台架。
   const pause = async () => {
@@ -993,7 +993,7 @@
     const afterSpace = await advance(220);
     ck('pause: 空格松开之后表接着走', afterSpace >= 50, `Δ=${afterSpace}`);
 
-    // js/main.js:340-341 那句注释承诺「换一局＝新的一局，新局一定在走」。这一条就是它的台架：
+    // js/main.js:321 那句注释承诺「换一局＝新的一局，新局一定在走」。这一条就是它的台架：
     // 带着暂停换一局，newGame 若不解暂停，界面会显示「继续」而表一动不动——按钮与时钟各说各话。
     el('btn-pause').click();
     await wait(30);
@@ -1034,8 +1034,8 @@
       eq('pause: 退出后按钮文字回到「全屏」', off.text, '全屏');
       eq('pause: 退出后 aria-pressed 回假', off.pressed, 'false');
       ck('pause: 退出后 body 上的 fullscreen 类摘掉', !document.body.classList.contains('fullscreen'), [...document.body.classList].join(' '));
-      // title 写着「全屏（F）」，js/main.js:724 真的绑了 F 键（`ev.key !== 'f' && ev.key !== 'F'`
-      // 才 return，命中后 main.js:729 走 `ev.preventDefault()` 再 `toggle()`）。
+      // title 写着「全屏（F）」，js/main.js:733 真的绑了 F 键（`k === 'f' || k === 'F'` 才拦下，
+      // 命中后 main.js:735 走 `e.preventDefault()` 再 `toggleFullscreen()`）。
       //
       // 这里**不**断言「按 F 之后进了全屏」：`key()` 派的是页内合成 KeyboardEvent，
       // 而 Chrome 只给**瞬时用户激活**过的脚本 `requestFullscreen()`。本场前面那次按钮
@@ -1068,7 +1068,7 @@
     window.removeEventListener('error', onErr);
     window.removeEventListener('unhandledrejection', onErr);
     const errsNow = errs.length;
-    ck('pause: 这一场没有未捕获异常/未处理 rejection（全屏被拒要由 js/main.js:694 的 settle 吃掉）',
+    ck('pause: 这一场没有未捕获异常/未处理 rejection（全屏被拒要由 js/main.js:585 的 fsSettle 吃掉）',
       errsNow === 0, errs.slice(0, 3).join(' | '));
     return report({ fs, focus: document.hasFocus(), fsEnabled: document.fullscreenEnabled, frozen, frozenP, resumed, jump, afterNew: afterNew.moved, errs: errsNow });
   };

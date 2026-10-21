@@ -498,3 +498,79 @@ a[href],
   min-height: 44px !important;
   min-width: 44px !important;
 }
+
+/* ============================================================
+   并线补回：暂停遮罩 / 触控命中区 / 减动效 / 全屏背景
+   这四段在"有机并线"里被裁掉了：页面上有 #pause-veil 与 .pause-card，
+   js/main.js 也有 syncPauseUI() 把遮罩掀开，可样式表里没有它的样式——
+   于是暂停看起来是"盘面下方多了一块白框"，而不是一块压住盘面的遮罩。
+   同理，系统级的"少动效"与手指上的命中区上限都在这一段里。
+   ============================================================ */
+
+/* ---------- pause ---------- */
+
+#pause-veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 11, 22, 0.82);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(1.5px);
+  z-index: 2;
+}
+
+.pause-card {
+  text-align: center;
+  padding: var(--space-card);
+  border: 1px solid var(--line-heavy);
+  border-radius: var(--radius-card);
+  background: var(--surface-lift);
+  max-width: 86%;
+}
+
+.pause-card h3 { margin: 0 0 6px; font-size: 19px; }
+.pause-card p { margin: 0 0 12px; font-size: 13px; color: var(--ink-dim); line-height: 1.65; }
+
+/* ---------- touch / motion / fullscreen ---------- */
+
+/* 手指上屏幕的时候，命中区再抬高一档：44 是下限，48 才是拇指的舒适区。
+   这几条要跟上面那条 44px 的底线一样带 !important —— 底线那条带 !important，
+   不带的话它按优先级压过这里，触摸档的 48px 就成了一句没生效的话。 */
+@media (pointer: coarse) {
+  button { min-height: 48px !important; }
+  .pad button { min-height: 56px !important; font-size: 19px; }
+  .tier { min-height: 56px !important; }
+  .top-actions button { min-width: 96px !important; }
+}
+
+/* 系统级的"少动效"是地板，游戏内那个开关只能往上加不能往下减。
+   这里是真的把动效关掉——不是只把 duration 改短：入场位移、按钮回弹、遮罩淡入全部取消。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .view,
+  #win-veil,
+  #pause-veil { animation: none !important; }
+  button:active { transform: none; }
+}
+
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+:fullscreen,
+:-webkit-full-screen {
+  background: var(--bg-top);
+  padding: 0;
+}

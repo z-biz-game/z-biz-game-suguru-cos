@@ -17,14 +17,17 @@ cd "$HERE" || exit 2
 # 进站点的：玩家浏览器会去要的东西，一个都不落。
 cp index.html manifest.webmanifest sw.js "$DEST/"
 cp -r css js "$DEST/"
-# 位图目录名不统一（icons/ 与 assets/ 都在用）：按存在与否收，缺的那个不是错误。
-for d in icons assets; do
+# 位图目录名不统一（icons/ 与 art/ 都在用）：按存在与否收，缺的那个不是错误。
+# art/ 是运行时真要的那两张（js/main.js 的 loadArt() 去要 art/tex-board.png 与
+# art/spark.png）；assets/ 只是出图脚本 assets/gen/make_art.py 的源码，不进站点。
+for d in icons art; do
   [ -d "$d" ] && cp -r "$d" "$DEST/"
 done
 
 # 不进站点的（有意为之，别"顺手加上"）：
 #   server.cjs / electron/     本地与桌面形态的宿主，浏览器用不到，传上去只是把源码摊开
 #   tools/                     闸与台架
+#   assets/                    出图脚本（make_art.py）的源码：产物里要的是它生成的 art/*.png
 #   README.md DESIGN.md        给组织的文档
 #   package.json               站点不读它；带上只会让 Pages 多一个可访问的依赖清单
 #   _tmp-*                     跑闸留下的日志

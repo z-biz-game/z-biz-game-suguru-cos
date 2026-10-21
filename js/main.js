@@ -52,7 +52,6 @@ const el = {
   canvas: $('#board'),
   pauseVeil: $('#pause-veil'),
   btnPause: $('#btn-pause'),
-  btnFull: $('#btn-full'),
 };
 
 const view = new BoardView(el.canvas);
@@ -84,32 +83,6 @@ function startClock() {
 function stopClock() {
   if (startedAt) baseElapsed += Date.now() - startedAt;
   startedAt = 0;
-}
-
-// ── 暂停 ────────────────────────────────────────────────────────────────
-// 暂停是**真冻结时钟**，不是挂个标签：暂停那一瞬把还在跑的那一段折进 baseElapsed，
-// 再把 startedAt 清零 —— clock() 于是恒等于 baseElapsed，一毫秒都不再涨。
-// 恢复时重新盖上 startedAt，时钟从冻结处续走；因为 baseElapsed 已经是累计值，
-// 恢复后第一帧的 dt 就是一个正常帧间隔，不会把暂停那几秒一次性吃掉（不跳步）。
-let paused = false;
-function setPaused(next) {
-  next = !!next;
-  if (paused === next) return paused;
-  if (next) {
-    baseElapsed = clock();   // 先结算到此刻，再停表
-    startedAt = 0;
-  } else {
-    startedAt = Date.now();
-  }
-  paused = next;
-  paintPause();
-  return paused;
-}
-function paintPause() {
-  const btn = $('#btn-pause');
-  if (!btn) return;
-  btn.textContent = paused ? '继续' : '暂停';
-  btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
 }
 
 // ---- geometry ------------------------------------------------------------------------
@@ -345,9 +318,10 @@ function newGame(seed = null, tierKey = tier) {
   baseElapsed = 0;
   startedAt = 0;
   startClock();
-  // 换一局＝新的一局，新局一定在走：带着上一局的 paused=true 进来会让时钟和按钮各说各话
-  if (paused) { paused = false; paintPause(); }
-  pulse = null;
+  // 换一局＝新的一局，新局一定在走：带着上一局的 paused=true 进来会让时钟和按钮各说各话。
+  // 动效也一起放下：脉冲与粒子是按上一局的相位在走，不归零的话新局的火花会接着上一局的节奏飘。
+  anim.reset();
+  setPaused(false);
   el.winVeil.hidden = true;
   el.hintRule.textContent = '提示理由';
   el.hintLine.textContent = '按 提示 会说出当前推得出的下一步，以及它依据哪条规则。';
@@ -516,8 +490,30 @@ function syncPauseUI() {
   document.body.classList.toggle('paused', paused);
 }
 
+// 暂停是**真冻结时钟**，不是挂个标签：暂停那一瞬把还在跑的那一段折进 baseElapsed，
+// 再把 startedAt 清零 —— clock() 于是恒等于 baseElapsed，一毫秒都不再涨。
+// 恢复时重新盖上 startedAt，时钟从冻结处续走；因为 baseElapsed 已经是累计值，
+// 恢复后第一帧的 dt 就是一个正常帧间隔，不会把暂停那几秒一次性吃掉（不跳步）。
+//
 // 暂停要做三件事：停表、把这一局写回存档、让仿真一步都不走。少第三件就是"暂停了但脉冲
 // 还在转、火花还在落地"——那不叫暂停，那叫挡住画面。
+function setPaused(v) {
+  const want = !!v && !!game && game.status !== 'won';
+  if (want === paused) {
+    syncPauseUI();
+    return paused;
+  }
+  paused = want;
+  if (paused) {
+    stopClock();
+    flushResume();
+  } else {
+    startClock();
+  }
+  syncPauseUI();
+  syncAll();
+  return paused;
+}
 
 const togglePause = () => setPaused(!paused);
 
@@ -551,41 +547,95 @@ function toggleMute() {
   return Sound.enabled();
 }
 
-function fullscreenEl() {
-  return document.fullscreenElement || document.webkitFullscreenElement || null;
+// ---- fullscreen ------------------------------------------------------------------------
+
+// 全屏只有一套实现、一颗入口按钮：顶栏那颗真实存在的 #btn-fullscreen。绑之前先问一句
+// "页面上有没有这颗按钮"——全屏最常见的假实现就是引用一个并不存在的 id，点下去什么也不
+// 发生，量具却算它"已实现"。所以找不到按钮就不装，也不假装有。
+const fsBtn = document.getElementById('btn-fullscreen');
+
+// 只做特性检测，不嗅探 UA：iOS Safari 是 webkitRequestFullscreen，老 Edge 是 ms 前缀，
+// 而 UA 字符串随时会改。"有没有这个能力"是查出来的，不是猜出来的。
+const fsRequest = () => document.documentElement.requestFullscreen
+  || document.documentElement.webkitRequestFullscreen
+  || document.documentElement.msRequestFullscreen;
+const fsExit = () => document.exitFullscreen
+  || document.webkitExitFullscreen
+  || document.msExitFullscreen;
+const fsCurrent = () => document.fullscreenElement
+  || document.webkitFullscreenElement
+  || document.msFullscreenElement
+  || null;
+
+// 不支持也要给个说法：只把按钮灰掉而不解释，玩家会以为这功能没做完。
+// supported 这枚标记不能省：下面 sync() 每次都会重写 title，不挡住的话，装的时候刚写
+// 进去的人话原因会被随后的 sync() 立刻抹成"全屏（F）"——禁用就变成一句没有理由的禁用。
+let fsSupported = !!fsRequest();
+
+function fsUnsupported() {
+  fsSupported = false;
+  if (fsBtn) {
+    fsBtn.disabled = true;
+    fsBtn.title = '这个浏览器不提供元素全屏（iOS Safari 请用「添加到主屏幕」独立打开）';
+  }
 }
 
-// 全屏绑到 HUD 上真实存在的 #btn-full；iOS Safari 没有 requestFullscreen，那条路径
-// 要说一句话告诉玩家为什么按了没反应，而不是让按钮静悄悄失灵。
-function toggleFullscreen() {
-  const root = document.documentElement;
-  if (fullscreenEl()) {
-    const exit = document.exitFullscreen || document.webkitExitFullscreen;
-    if (exit) Promise.resolve(exit.call(document)).catch(() => {});
-    return false;
-  }
-  const req = root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen;
-  if (!req) {
-    el.stateLine.textContent = '这个浏览器不开放网页全屏（iOS Safari 就用系统的添加主屏幕）。';
-    return false;
-  }
-  Promise.resolve(req.call(root)).catch(() => {
+// fullscreen 返回 Promise，被拒时必须吃掉：iOS Safari 对多数非 video 元素直接拒绝，
+// 让这个 rejection 冒泡出去会变成一条未捕获错误，整局游戏跟着挂。拒了也要说一句话。
+const fsSettle = (p) => {
+  if (!p || !p.catch) return;
+  p.catch(() => {
+    fsUnsupported();
     el.stateLine.textContent = '全屏被系统拦下了：多半是不允许全屏的环境。';
   });
+};
+
+// 进出都能走：已经全屏时这次调用是退出，不是"再进一次"。
+function toggleFullscreen() {
+  try {
+    if (fsCurrent()) {
+      const exit = fsExit();
+      if (exit) fsSettle(exit.call(document));
+    } else {
+      const req = fsRequest();
+      if (!req) {
+        fsUnsupported();
+        el.stateLine.textContent = '这个浏览器不开放网页全屏（iOS Safari 就用系统的添加主屏幕）。';
+        return false;
+      }
+      fsSettle(req.call(document.documentElement));
+    }
+  } catch (e) {
+    fsUnsupported();
+    return false;
+  }
   return true;
 }
 
+// Esc 和系统手势退出都不经过我们的代码，按钮状态只能靠 fullscreenchange 回写，
+// 否则用户已经退出、HUD 还停在"退出全屏"，下一次点击反而会重新进全屏。
 function syncFullscreenUI() {
-  const on = !!fullscreenEl();
-  if (el.btnFull) {
-    el.btnFull.textContent = on ? '退出全屏' : '全屏';
-    el.btnFull.setAttribute('aria-pressed', String(on));
+  const on = !!fsCurrent();
+  if (fsBtn) {
+    fsBtn.setAttribute('aria-pressed', String(on));
+    fsBtn.textContent = on ? '退出全屏' : '全屏';
+    if (fsSupported) fsBtn.title = '全屏（F）';
   }
+  const body = document.body;
+  if (body && body.classList) body.classList.toggle('fullscreen', on);
   // 进/出全屏都改了可视盒子，画布得照新宽度重排一次。
   if (game && !el.viewGame.hidden) {
     view.resize(game, availBox().w, availBox().h);
     draw();
   }
+}
+
+if (fsBtn) {
+  fsBtn.addEventListener('click', toggleFullscreen);
+  if (!fsSupported) fsUnsupported();
+}
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
+  document.addEventListener(ev, syncFullscreenUI);
 }
 
 // ---- frame loop（dt）-------------------------------------------------------------------
@@ -672,6 +722,20 @@ document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
 
+  // 这两颗键排在"选档页提前 return"之前：它们作用在**顶栏**的两颗按钮上，而顶栏在选档页
+  // 也在场，所以两页都得按得动。以前 M 在这里、又在窗口级 keydown 里各绑了一次，
+  // 一次按键走完两处 ⇒ 静音被自己抵消，按 M 看着像没反应。
+  if (k === 'm' || k === 'M') {
+    e.preventDefault();
+    toggleMute();
+    return;
+  }
+  if (k === 'f' || k === 'F') {
+    e.preventDefault();
+    toggleFullscreen();
+    return;
+  }
+
   // 选档页：Enter / Space 开当前档。
   if (el.viewGame.hidden) {
     if (k === 'Enter' || k === ' ' || k === 'Spacebar') {
@@ -683,21 +747,12 @@ document.addEventListener('keydown', (e) => {
   if (!game) return;
 
   // 控制键在暂停态也得按得动，否则暂停之后只剩按钮能救。
-  if (k === 'p' || k === 'P') {
-    // 故意不把 Space 也绑成暂停：自动化对拍注入的 Space 会被读成 state=paused，
-    // 于是"其实跑起来了"被误判成"进不了关卡"。Space 在游戏内不做任何事。
+  if (k === 'p' || k === 'P' || k === ' ' || e.code === 'Space') {
+    // 暂停键位是 P 与空格两枚。顶栏那颗按钮的 title 写着「暂停 / 继续 (P 或 Space)」，
+    // 那是给玩家的承诺：写上去的键位就必须真的停表（tools/scenarios.js 的 pause 场盯着这件事）。
+    // 选档页的空格是"开当前档"，所以这条要排在选档页那段之后。
     e.preventDefault();
     togglePause();
-    return;
-  }
-  if (k === 'm' || k === 'M') {
-    e.preventDefault();
-    toggleMute();
-    return;
-  }
-  if (k === 'f' || k === 'F') {
-    e.preventDefault();
-    toggleFullscreen();
     return;
   }
   if (k === 'r' || k === 'R') {
@@ -742,12 +797,6 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'n' || k === 'N') {
     e.preventDefault();
     newGame();
-  } else if (k === 'p' || k === 'P' || k === ' ' || e.code === 'Space') {
-    e.preventDefault();
-    setPaused(!paused);
-  } else if (k === 'Escape') {
-    e.preventDefault();
-    show('menu');
   }
 });
 
@@ -768,7 +817,9 @@ function buildPad() {
   }
 }
 
-$('#btn-pause').addEventListener('click', () => setPaused(!paused));
+// 暂停键只接一次：同一颗按钮挂两个 click，听起来是"按一下没反应"——
+// 第一次 click 把它暂停了，第二次 click 紧接着又把它放开了。
+$('#btn-pause').addEventListener('click', togglePause);
 $('#btn-hint').addEventListener('click', useHint);
 $('#btn-erase').addEventListener('click', () => {
   if (game && game.sel >= 0 && !paused) play(game.sel, 0);
@@ -779,8 +830,6 @@ $('#btn-menu').addEventListener('click', () => show('menu'));
 $('#btn-menu-2').addEventListener('click', () => show('menu'));
 $('#btn-again').addEventListener('click', () => newGame());
 $('#btn-resume').addEventListener('click', () => begin({ resume: true }));
-$('#btn-pause').addEventListener('click', togglePause);
-$('#btn-full').addEventListener('click', toggleFullscreen);
 if (el.pauseVeil) {
   // 暂停遮罩上那颗"继续"就是唯一的出口：点遮罩本身也当作继续，比只留一个 24px 的小按钮好按。
   el.pauseVeil.addEventListener('click', (e) => {
@@ -816,10 +865,6 @@ window.addEventListener('resize', () => {
   view.resize(game, availBox().w, availBox().h);
   draw();
 });
-
-for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) {
-  document.addEventListener(ev, syncFullscreenUI);
-}
 
 // 切到后台就把时钟停下：不然"挂一小时再回来收尾"也能刷出纪录。
 // 帧循环一起停：回来时 lastFrameAt 复位，被挂起的那段时间一步都不补。
@@ -915,88 +960,17 @@ window.suguru = {
     syncAll();
     return r;
   },
+  // ---- 验收台架要读到的那几件东西 ------------------------------------------------
+  // 这一组不是"给测试用的旁路"，而是本模块本来就在做的事的只读门面：动画时钟、音效开关、
+  // 暂停与全屏的入口。少了它们，量具只能靠点按钮猜状态，于是"暂停只是改了个标签"这种
+  // 假实现也能过——台架必须能**读**到真实状态。
+  anim,
+  Sound,
+  togglePause,
+  restartGame,
+  toggleMute,
+  toggleFullscreen,
+  isPaused: () => paused,
+  phase: phaseName,
+  rt: () => Object.assign({ phase: phaseName() }, anim.snapshot()),
 };
-
-// ---- 全屏开关（#btn-fullscreen）----
-// 绑的是本页 HUD 上真实存在的那个按钮。全屏最常见的假实现就是引用一个并不存在的
-// id：点下去什么也不会发生，量具却算它"已实现"。所以这里找不到按钮就直接不装。
-(function bindFullscreen() {
-  const btn = document.getElementById('btn-fullscreen');
-  if (!btn) return;
-  const root = document.documentElement;
-  // 只做特性检测，不嗅探 UA：iOS Safari 是 webkitRequestFullscreen，老 Edge 是 ms 前缀，
-  // 而 UA 字符串随时会改。"有没有这个能力"是查出来的，不是猜出来的。
-  const req = root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen;
-  const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
-  const current = () => document.fullscreenElement || document.webkitFullscreenElement
-    || document.msFullscreenElement || null;
-
-  // 不支持也要给个说法：只把按钮灰掉而不解释，玩家会以为这功能没做完。
-  // supported 这枚标记不能省：下面 sync() 每次都会重写 title，不挡住的话，装的时候刚写
-  // 进去的人话原因会被随后的 sync() 立刻抹成"全屏 (F)"——禁用就变成一句没有理由的禁用。
-  let supported = !!req;
-  const unsupported = () => {
-    supported = false;
-    btn.disabled = true;
-    btn.title = '这个浏览器不提供元素全屏（iOS Safari 请用「添加到主屏幕」独立打开）';
-  };
-  if (!req) unsupported();
-
-  // fullscreen 返回 Promise，被拒时必须吃掉：iOS Safari 对多数非 video 元素直接拒绝，
-  // 让这个 rejection 冒泡出去会变成一条未捕获错误，整局游戏跟着挂。
-  const settle = (p) => { if (p && p.catch) p.catch(unsupported); };
-
-  // 进出都能走：已经全屏时这次调用是退出，不是"再进一次"。
-  function toggle() {
-    try {
-      if (current()) {
-        if (exit) settle(exit.call(document));
-      } else if (req) {
-        settle(req.call(root));
-      } else {
-        unsupported();
-      }
-    } catch (e) {
-      unsupported();
-    }
-  }
-
-  // Esc 和系统手势退出都不经过我们的代码，按钮状态只能靠 fullscreenchange 回写，
-  // 否则用户已经退出、HUD 还停在"退出全屏"，下一次点击反而会重新进全屏。
-  function sync() {
-    const on = !!current();
-    btn.setAttribute('aria-pressed', String(on));
-    btn.textContent = on ? "退出全屏" : "全屏";
-    if (supported) btn.title = "全屏" + '（F）';
-    const body = document.body;
-    if (body && body.classList) body.classList.toggle('fullscreen', on);
-  }
-
-  btn.addEventListener('click', toggle);
-  window.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'f' && ev.key !== 'F') return;
-    const t = ev.target;
-    // 盘号 / 种子这类输入框里打字不能触发全屏，否则玩家输 seed 输到一半屏幕没了。
-    if (t && /input|textarea|select/i.test(t.tagName || '')) return;
-    if (ev.repeat || ev.metaKey || ev.ctrlKey || ev.altKey) return;
-    ev.preventDefault();
-    toggle();
-  });
-  window.addEventListener('fullscreenchange', sync);
-  window.addEventListener('webkitfullscreenchange', sync);
-  window.addEventListener('MSFullscreenChange', sync);
-  sync();
-})();
-
-// ---- 静音开关（M）-----------------------------------------------------------------
-// M 键切静音，与全屏/重开/提示同一套键位。
-// 这里只负责把按键翻译成"点一下音效按钮"：真静音在 js/audio/synth.js 里做
-// （suspend AudioContext + 静音态不再新建振荡器节点），偏好由它落盘到 localStorage。
-window.addEventListener('keydown', (ev) => {
-  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-  if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName || '')) return;
-  if (ev.key === 'm' || ev.key === 'M') {
-    ev.preventDefault();
-    $('#btn-sound').click();
-  }
-});
