@@ -28,10 +28,10 @@
   **node 门禁和浏览器门禁各自量一遍**，谁漂了谁红。
 - 难度不是标签：`初学 → 大师` 五档的分数带是**实测**出来的（`npm run balance` 打印分位表 + 漂移门禁），
   最大档只到 9×9，**为什么不能更大是量出来的**，写在 `js/engine/generate.js` 的恒等式注释里。
-- 规模：**10 个 ES Module / 2,273 行 JS** + 7 个验证脚本 1,644 行 + 574 行 CSS/HTML，**运行时依赖 0 个**
+- 规模：**12 个 ES Module / 2,999 行 JS** + 10 个验证脚本 2,599 行 + 745 行 CSS/HTML，**运行时依赖 0 个**
   （Electron 只是 devDependency，桌面壳和网页跑的是同一份代码）。
 - 验证：**引擎不变量全绿**（四条规则的 soundness 探针 / 独立计数对账 / 逐格改一数的答复 / 五档出货 / 跨引擎指纹）
-  + **310 项浏览器断言**（9 个场景，读 DOM 几何与画布像素，不读标志位）。
+  + **355 项浏览器断言**（10 个场景，读 DOM 几何与画布像素，不读标志位）。
 - **在线试玩**：<https://z-biz-game.github.io/z-biz-game-suguru-cos/>（`main` 分支推送即自动部署）
 
 ---
@@ -48,7 +48,7 @@ npm run electron     # 桌面壳（electron/main.cjs，同一份代码）
 npm run check        # 逐文件 node --check 语法门禁
 npm test             # 引擎不变量：规则 soundness / 独立计数对账 / verify 收拒 / 跨引擎指纹
 npm run balance      # 难度实测台：分数分位、命中率、出题墙钟、档位阶梯与漂移门禁
-npm run verify       # 无头 Chrome 跑 9 个浏览器场景（需本机 Chrome，见下）
+npm run verify       # 无头 Chrome 跑 10 个浏览器场景（需本机 Chrome，见下）
 ```
 
 `npm run verify` 自己起服务、自己开 Chrome、自己收尾，退出码即结论：
@@ -62,7 +62,8 @@ npm run verify       # 无头 Chrome 跑 9 个浏览器场景（需本机 Chrome
 === save ===       14 checks, 0 failed
 === resume ===     15 checks, 0 failed
 === layout ===     42 checks, 0 failed
-=== a11y ===       30 checks, 0 failed
+=== a11y ===       48 checks, 0 failed
+=== pause ===       27 checks, 0 failed
 === ALL GREEN ===
 ```
 
@@ -89,7 +90,11 @@ BASE_URL=https://z-biz-game.github.io/z-biz-game-suguru-cos/ npm run verify
 | **提示**（或 `H`） | 给出题面已经强制、而你还没写下的下一格，点名规则；真的落子，也真的计入求助次数 |
 | **撤销**（或 `Z`） | 退掉一步。**步数退，求助次数不退**——退掉一次提示只退脚本游标，好让那一步还能被说一遍 |
 | **换一局**（或 `N`） | 换一张新盘。种子是在**界面这一层**抽的（`js/main.js` 的 `freshSeed`），生成器仍然只吃 seed——抽出来的 seed 会跟着续局存档写回去，所以"只记 seed 就能重画同一张盘"对新盘照样成立（`play` 场景钉着这一条） |
-| **Esc** | 回选档；这一局自动留下续局 |
+| **暂停 / 继续**（或 `P` / 空格） | 真冻结时钟：暂停那一瞬把还在跑的那一段折进累计值，遮罩盖住盘面，恢复后从冻结处续走。顶栏那颗按钮的 title 写着「暂停 / 继续 (P 或 Space)」——写上去的键位就必须真的停表 |
+| **静音 / 恢复音效**（或 `M`） | 真静音：`AudioContext` 被 suspend，静止态一个振荡器节点都不许新建（不是把音量拧到 0） |
+| **全屏 / 退出全屏**（或 `F`） | 只做特性检测，不嗅探 UA；浏览器不给元素全屏时那颗按钮被禁用并写清原因 |
+| **重开本局**（或 `R`） | 题面（seed）不动，把时钟、动效、粒子、撤销栈、提示游标、代价计数全放下 |
+| **Esc** | 回选档；这一局自动留下续局（暂停中按 Esc 是继续） |
 
 判胜用的是 `verify()`：只读盘面，按规则原文核对"每个区域是不是 1..k 各一次、八邻有没有同数"。
 它不读推导脚本也不读 UI 记账，所以**提示逻辑写错也伪造不出一场胜利**。
@@ -153,10 +158,13 @@ js/engine/count.js     独立的逐格穷举计数器（唯一性的第二意见
 js/engine/generate.js  1 的锚点集 → 长区域 → 按号位配数 → 往回挖洞 + 五档档位表
 js/ui/game.js          状态机：一步一快照、撤销、提示脚本、判胜
 js/render/board.js     几何 + 绘制 + 命中（区域底色贪心着色，齐了的区域换绿边界）
+js/render/anim.js      定步长的动效时钟：提示脉冲与收工火花粒子都走它
 js/theme.js            配色与动效令牌（样式表和 canvas 共用同一批对象）
 js/audio/synth.js      WebAudio 合成音效，零音频文件
 js/store.js            localStorage 单键存档：种子 + 盘面（一格一字符）+ 这一局的花费
+js/pwa.js              service worker 注册（全仓唯一的注册口）
 js/main.js             装配、菜单、事件、window.suguru 调试面
+art/                   运行时位图：盘底纸纹与火花精灵（由 assets/gen/make_art.py 生成）
 tools/                 engine-test / balance / golden(跨引擎夹具) / playtest(CDP) / scenarios / verify.sh / assemble-site.sh / deploy-set.mjs / deploy-set-selftest.mjs
 tools/assemble-site.sh  部署产物的唯一清单（pages.yml 与本地闸调同一支）
 tools/deploy-set.mjs  部署集闸：检查即将上传的那份产物
@@ -189,7 +197,7 @@ MIT。见 `LICENSE`。
   内联成 base64 的图标先解码再读同一段。后一条不是可选项：图标可能住在清单里而不是盘上的 `.png`
   （有的仓另有一条"零二进制文件"的承诺，那条只约束"有没有 .png 这个文件"）；如果 P 段只筛文件名，
   声明写 512 而真图 192 就一路放行。
-- **钉住两个数**：R 段实际检查的路径条数（`26`）与这一次跑的断言条数（`44`），两个数
+- **钉住两个数**：R 段实际检查的路径条数（`31`）与这一次跑的断言条数（`55`），两个数
   都钉在 `tools/deploy-set.mjs` 顶部的那对常量里。没改页面却掉了，说明解析断了；删掉一张图标会同时
   少一条 R10 与那张的 P1/P2，所以两个数一起钉，断言条数能漂就是闸在缩水的信号。这一节故意只写数值、
   不写那对常量的名字，也不写别仓文档闸的编号：有的仓的文档闸会拿"文档里出现过的同名标识号"回数它
@@ -200,7 +208,7 @@ MIT。见 `LICENSE`。
 各下一刀（X1 清单不收位图目录 / X2 模块边改名 / X3 CSS 写绝对路径 / X4 `start_url` 绝对 /
 X5 删光 >=512 图标 / X6 少一个必填字段 / X7 声明尺寸与真图不符 / X8 workflow 不调脚本 /
 X9 CI 不跑闸 / X10 是阴性对照——往入口 JS 追加一行只写在注释里的假路径，闸必须仍然绿、条数仍然
-`26`、断言仍然 `44`；X11 og:image 退回相对路径 / X12 og:image 的前缀指向别的 slug /
+`31`、断言仍然 `55`；X11 og:image 退回相对路径 / X12 og:image 的前缀指向别的 slug /
 X13 内联位图谎报尺寸——只在有靶子时下：X11/X12 要页面上那句 og:image，X13 要清单里真有一段 base64
 图标，没有就打印 SKIP；反过来 X1 没有位图目录可砍时改砍 css，P 段一位都不核时台架直接报靶子不够），
 要求每一刀都让闸**点名**变红。靶子从 `DEPLOY_SET_DUMP=1`
